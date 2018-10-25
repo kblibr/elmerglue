@@ -1,19 +1,19 @@
 {
-  "name": "kinesalite",
-  "version": "1.14.0",
-  "description": "An implementation of Amazon's Kinesis built on LevelDB",
+  "name": "elmerglue",
+  "version": "0.0.1",
+  "description": "An implementation of Amazon's Glue build on LevelDB",
   "main": "index.js",
   "bin": "cli.js",
   "scripts": {
     "test": "mocha --require should --reporter spec -t $([ $REMOTE ] && echo 30s || echo 4s)",
     "coverage": "istanbul cover ./node_modules/.bin/_mocha -- --require should -t 4s"
   },
-  "repository": "mhart/kinesalite",
+  "repository": "???/elmerglue",
   "keywords": [
-    "kinesis",
+    "glue",
     "mock",
-    "kinesilite",
-    "kinesis-mock",
+    "glue-lite",
+    "glue-mock",
     "test",
     "event",
     "stream",
@@ -23,13 +23,12 @@
     "logs",
     "logging"
   ],
-  "author": "Michael Hart <michael.hart.au@gmail.com>",
+  "author": "Michael Hart <michael.hart.au@gmail.com>, Bryant Larsen <bryant.larsen@gmail.com>",
   "license": "MIT",
   "dependencies": {
     "async": "^2.6.1",
-    "bignumber.js": "^7.2.1",
     "lazy": "^1.0.11",
-    "level-sublevel": "^6.6.2",
+    "level-sublevel": "^6.6.5",
     "levelup": "^3.0.1",
     "lock": "^1.1.0",
     "memdown": "^3.0.0",

@@ -1,4 +1,4 @@
-Kinesalite
+Elmerglue
 ----------
 
 [![Build Status](https://secure.travis-ci.org/mhart/kinesalite.png?branch=master)](http://travis-ci.org/mhart/kinesalite)

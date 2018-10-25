@@ -1,5 +1,5 @@
 exports.types = {
-  StreamName: {
+  DatabaseName: {
     type: 'String',
     notNull: true,
     regex: '[a-zA-Z0-9_.-]+',

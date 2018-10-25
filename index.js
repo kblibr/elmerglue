@@ -10,16 +10,14 @@ var https = require('https'),
 
 var MAX_REQUEST_BYTES = 7 * 1024 * 1024
 
-var validApis = ['Kinesis_20131202'],
-    validOperations = ['AddTagsToStream', 'CreateStream', 'DeleteStream', 'DescribeStream', 'GetRecords',
-      'GetShardIterator', 'ListShards', 'ListStreams', 'ListTagsForStream', 'MergeShards', 'PutRecord', 'PutRecords',
-      'RemoveTagsFromStream', 'SplitShard', 'IncreaseStreamRetentionPeriod', 'DecreaseStreamRetentionPeriod'],
+var validApis = ['AWSGlue'],
+    validOperations = ['GetDatabase', 'GetDatabases','GetTable','GetTables','CreateTable', 'GetPartition','GetPartitions', 'UpdatePartition', 'CreatePartition', 'GetDatabase', 'CreateDatabase'],
     actions = {},
     actionValidations = {}
 
-module.exports = kinesalite
+module.exports = elmerglue
 
-function kinesalite(options) {
+function elmerglue(options) {
   options = options || {}
   var server, store = db.create(options), requestHandler = httpHandler.bind(null, store)
 
@@ -268,5 +266,5 @@ function httpHandler(store, req, res) {
   })
 }
 
-if (require.main === module) kinesalite().listen(4567)
+if (require.main === module) elmerglue().listen(4567)
 

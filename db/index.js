@@ -1,37 +1,18 @@
-var crypto = require('crypto'),
-    lazy = require('lazy'),
-    levelup = require('levelup'),
-    memdown = require('memdown'),
-    sublevel = require('level-sublevel'),
-    lock = require('lock'),
-    BigNumber = require('bignumber.js')
+let levelup = require('levelup')
+let memdown = require('memdown')
+let sublevel = require('level-sublevel')
+let lock = require('lock')
 
 exports.create = create
-exports.lazy = lazyStream
 exports.clientError = clientError
 exports.serverError = serverError
-exports.parseSequence = parseSequence
-exports.stringifySequence = stringifySequence
-exports.incrementSequence = incrementSequence
-exports.shardIxToHex = shardIxToHex
-exports.shardIdName = shardIdName
-exports.resolveShardId = resolveShardId
-exports.partitionKeyToHashKey = partitionKeyToHashKey
-exports.createShardIterator = createShardIterator
-exports.sumShards = sumShards
-exports.ITERATOR_PWD = 'kinesalite'
 
 function create(options) {
   options = options || {}
-  if (options.createStreamMs == null) options.createStreamMs = 500
-  if (options.deleteStreamMs == null) options.deleteStreamMs = 500
-  if (options.updateStreamMs == null) options.updateStreamMs = 500
-  if (options.shardLimit == null) options.shardLimit = 10
-
   var db = levelup(options.path ? require('leveldown')(options.path) : memdown()),
-      sublevelDb = sublevel(db),
-      metaDb = sublevelDb.sublevel('meta', {valueEncoding: 'json'}),
-      streamDbs = []
+    sublevelDb = sublevel(db),
+    metaDb = sublevelDb.sublevel('meta', {valueEncoding: 'json'}),
+    glueDB = []
 
   metaDb.lock = lock.Lock()
 
@@ -39,65 +20,123 @@ function create(options) {
   metaDb.awsAccountId = (process.env.AWS_ACCOUNT_ID || '0000-0000-0000').replace(/[^\d]/g, '')
   metaDb.awsRegion = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1'
 
-  function getStreamDb(name) {
-    if (!streamDbs[name]) {
-      streamDbs[name] = sublevelDb.sublevel('stream-' + name, {valueEncoding: 'json'})
-      streamDbs[name].lock = lock.Lock()
+  function getGlueDB(name) {
+    if (!glueDB[name]) {
+      glueDB[name] = sublevelDb.sublevel('glue-' + name, {valueEncoding: 'json'})
+      glueDB[name].lock = lock.Lock()
     }
-    return streamDbs[name]
+    return glueDB[name]
   }
 
-  function deleteStreamDb(name, cb) {
-    var streamDb = getStreamDb(name)
-    delete streamDbs[name]
-    lazyStream(streamDb.createKeyStream(), cb).join(function(keys) {
-      streamDb.batch(keys.map(function(key) { return {type: 'del', key: key} }), cb)
+  function deleteGlueDB(name, cb) {
+    let streamDb = getGlueDB(name)
+    delete glueDB[name]
+    lazyStream(streamDb.createKeyStream(), cb).join(function (keys) {
+      streamDb.batch(keys.map(function (key) {
+        return {type: 'del', key: key}
+      }), cb)
     })
   }
 
-  function getStream(name, cb) {
-    metaDb.get(name, function(err, stream) {
-      if (err) {
-        if (err.name == 'NotFoundError') {
-          err.statusCode = 400
-          err.body = {
-            __type: 'ResourceNotFoundException',
-            message: 'Stream ' + name + ' under account ' + metaDb.awsAccountId + ' not found.',
-          }
-        }
-        return cb(err)
+  function initDatabase(name) {
+    if (!glueDB[name]) {
+      glueDB[name] = sublevelDb.sublevel('glueDatabase-' + name, {valueEncoding: 'json'})
+      glueDB[name].lock = lock.Lock()
+    }
+  }
+
+  function createPartition(req, cb) {
+    let obj = req.PartitionInput
+    initDatabase(req.DatabaseName)
+    glueDB[req.DatabaseName].put('partition!' + req.TableName + '!' + obj.Values.join('#'), obj, cb)
+  }
+
+  function getPartition(req, cb) {
+    initDatabase(req.DatabaseName)
+    glueDB[req.DatabaseName].get('partition!' + req.TableName + '!' + req.PartitionValues.join('#'), (err, obj) => {
+      cb(null, obj)
+    })
+  }
+
+  function getPartitions(req, cb) {
+    let retVal = []
+    initDatabase(req.DatabaseName)
+    let stream = glueDB[req.DatabaseName].createReadStream()
+    stream.on('data', (data) => {
+      if (data.key.indexOf('partition') == 0 && data.key.indexOf(req.TableName) > 1) {
+        retVal.push(data.value)
       }
-
-      cb(null, stream)
+    })
+    stream.on('end', () => {
+      cb(null, retVal)
     })
   }
 
-  function recreate() {
-    var self = this, newStore = create(options)
-    Object.keys(newStore).forEach(function(key) {
-      self[key] = newStore[key]
+  function createDatabase(params, cb) {
+    initDatabase(params.DatabaseInput.Name)
+    glueDB[params.DatabaseInput.Name].put('database', params.DatabaseInput, cb)
+  }
+
+  function getDatabase(reqParam, cb) {
+    initDatabase(reqParam.Name)
+    glueDB[reqParam.Name].get('database', (err, obj) => {
+      cb(null, obj)
+    })
+  }
+
+  function getDatabases(store, cb) {
+    let retVal = []
+    let stream = db.createReadStream()
+    stream.on('data', (data) => {
+      if (("" + data.key).split('!')[2] == 'database') {
+        retVal.push(JSON.parse(data.value))
+      }
+    })
+    stream.on('end', () => {
+      cb(null, retVal)
+    })
+  }
+
+  function createTable(params, cb) {
+
+    initDatabase(params.DatabaseName)
+    glueDB[params.DatabaseName].put('table!' + params.TableInput.Name, params.TableInput, cb)
+  }
+
+  function getTable(params, cb) {
+    initDatabase(params.DatabaseName)
+    glueDB[params.DatabaseName].get('table!' + params.Name, (err, obj) => {
+      cb(null, obj)
+    })
+  }
+
+  function getTables(params, cb) {
+    initDatabase(params.DatabaseName)
+    let retVal = []
+    let stream = glueDB[params.DatabaseName].createReadStream()
+    stream.on('data', (data) => {
+      if (data.key.indexOf('table') == 0) {
+        retVal.push(data.value)
+      }
+    })
+    stream.on('end', () => {
+      cb(null, retVal)
     })
   }
 
   return {
-    createStreamMs: options.createStreamMs,
-    deleteStreamMs: options.deleteStreamMs,
-    updateStreamMs: options.updateStreamMs,
-    shardLimit: options.shardLimit,
     db: db,
-    metaDb: metaDb,
-    getStreamDb: getStreamDb,
-    deleteStreamDb: deleteStreamDb,
-    getStream: getStream,
-    recreate: recreate,
+    createDatabase: createDatabase,
+    createPartition: createPartition,
+    updatePartition: createPartition,
+    getPartition: getPartition,
+    getTable: getTable,
+    getDatabases: getDatabases,
+    getDatabase: getDatabase,
+    getTables: getTables,
+    createTable: createTable,
+    getPartitions: getPartitions,
   }
-}
-
-function lazyStream(stream, errHandler) {
-  if (errHandler) stream.on('error', errHandler)
-  var streamAsLazy = lazy(stream)
-  if (stream.destroy) streamAsLazy.on('pipe', stream.destroy.bind(stream))
-  return streamAsLazy
 }
 
 function clientError(type, msg, statusCode) {
@@ -111,160 +150,4 @@ function clientError(type, msg, statusCode) {
 
 function serverError(type, msg, statusCode) {
   return clientError(type || 'InternalFailure', msg, statusCode || 500)
-}
-
-var POW_2_124 = new BigNumber(2).pow(124)
-var POW_2_124_NEXT = new BigNumber(2).pow(125).times(16)
-var POW_2_185 = new BigNumber(2).pow(185)
-var POW_2_185_NEXT = new BigNumber(2).pow(185).times(1.5)
-
-function parseSequence(seq) {
-  var seqNum = new BigNumber(seq)
-  if (seqNum.lt(POW_2_124)) {
-    seqNum = seqNum.plus(POW_2_124)
-  }
-  var hex = seqNum.toString(16), version = seqNum.lt(POW_2_124_NEXT) ? 0 :
-    (seqNum.gt(POW_2_185) && seqNum.lt(POW_2_185_NEXT)) ? parseInt(hex.slice(hex.length - 1), 16) : null
-  if (version == 2) {
-    var seqIxHex = hex.slice(11, 27), shardIxHex = hex.slice(38, 46)
-    if (parseInt(seqIxHex[0], 16) > 7) throw new Error('Sequence index too high')
-    if (parseInt(shardIxHex[0], 16) > 7) shardIxHex = '-' + shardIxHex
-    var shardCreateSecs = parseInt(hex.slice(1, 10), 16)
-    if (shardCreateSecs >= 16025175000) throw new Error('Date too large: ' + shardCreateSecs)
-    return {
-      shardCreateTime: shardCreateSecs * 1000,
-      seqIx: new BigNumber(seqIxHex, 16).toFixed(),
-      byte1: hex.slice(27, 29),
-      seqTime: parseInt(hex.slice(29, 38), 16) * 1000,
-      shardIx: parseInt(shardIxHex, 16),
-      version: version,
-    }
-  } else if (version == 1) {
-    return {
-      shardCreateTime: parseInt(hex.slice(1, 10), 16) * 1000,
-      byte1: hex.slice(11, 13),
-      seqTime: parseInt(hex.slice(13, 22), 16) * 1000,
-      seqRand: hex.slice(22, 36),
-      seqIx: parseInt(hex.slice(36, 38), 16),
-      shardIx: parseInt(hex.slice(38, 46), 16),
-      version: version,
-    }
-  } else if (version === 0) {
-    var shardCreateSecs = parseInt(hex.slice(1, 10), 16)
-    if (shardCreateSecs >= 16025175000) throw new Error('Date too large: ' + shardCreateSecs)
-    return {
-      shardCreateTime: shardCreateSecs * 1000,
-      byte1: hex.slice(10, 12),
-      seqRand: hex.slice(12, 28),
-      shardIx: parseInt(hex.slice(28, 32), 16),
-      version: version,
-    }
-  } else {
-    throw new Error('Unknown version: ' + version)
-  }
-}
-
-function stringifySequence(obj) {
-  if (obj.version == null || obj.version == 2) {
-    return new BigNumber([
-      '2',
-      ('00000000' + Math.floor(obj.shardCreateTime / 1000).toString(16)).slice(-9),
-      (obj.shardIx || 0).toString(16).slice(-1),
-      ('0000000000000000' + new BigNumber(obj.seqIx || 0).toString(16)).slice(-16),
-      obj.byte1 || '00', // Unsure what this is
-      ('00000000' + Math.floor((obj.seqTime || obj.shardCreateTime) / 1000).toString(16)).slice(-9),
-      shardIxToHex(obj.shardIx),
-      '2',
-    ].join(''), 16).toFixed()
-  } else if (obj.version == 1) {
-    return new BigNumber([
-      '2',
-      ('00000000' + Math.floor(obj.shardCreateTime / 1000).toString(16)).slice(-9),
-      (obj.shardIx || 0).toString(16).slice(-1),
-      obj.byte1 || '00', // Unsure what this is
-      ('00000000' + Math.floor((obj.seqTime || obj.shardCreateTime) / 1000).toString(16)).slice(-9),
-      obj.seqRand || '00000000000000', // Just seems to be a random string of hex
-      ('0' + (obj.seqIx || 0).toString(16)).slice(-2),
-      shardIxToHex(obj.shardIx),
-      '1',
-    ].join(''), 16).toFixed()
-  } else if (obj.version === 0) {
-    return new BigNumber([
-      '1',
-      ('00000000' + Math.floor(obj.shardCreateTime / 1000).toString(16)).slice(-9),
-      obj.byte1 || '00', // Unsure what this is
-      obj.seqRand || '0000000000000000', // Unsure what this is
-      shardIxToHex(obj.shardIx).slice(-4),
-    ].join(''), 16).toFixed()
-  } else {
-    throw new Error('Unknown version: ' + obj.version)
-  }
-}
-
-function incrementSequence(seqObj, seqTime) {
-  if (typeof seqObj == 'string') seqObj = parseSequence(seqObj)
-
-  return stringifySequence({
-    shardCreateTime: seqObj.shardCreateTime,
-    seqIx: seqObj.seqIx,
-    seqTime: seqTime || (seqObj.seqTime + 1000),
-    shardIx: seqObj.shardIx,
-  })
-}
-
-function shardIxToHex(shardIx) {
-  return ('0000000' + (shardIx || 0).toString(16)).slice(-8)
-}
-
-function shardIdName(shardIx) {
-  return 'shardId-' + (shardIx < 0 ? '-' : '') + ('00000000000' + Math.abs(shardIx)).slice(shardIx < 0 ? -11 : -12)
-}
-
-function resolveShardId(shardId) {
-  shardId = shardId.split('-')[1] || shardId
-  var shardIx = /^\d+$/.test(shardId) ? parseInt(shardId) : NaN
-  if (!(shardIx >= 0 && shardIx <= 2147483647)) throw new Error('INVALID_SHARD_ID')
-  return {
-    shardId: shardIdName(shardIx),
-    shardIx: shardIx,
-  }
-}
-
-// Will determine ExplicitHashKey, which will determine ShardId based on stream's HashKeyRange
-function partitionKeyToHashKey(partitionKey) {
-  return new BigNumber(crypto.createHash('md5').update(partitionKey, 'utf8').digest('hex'), 16)
-}
-
-// Unsure how shard iterators are encoded
-// First eight bytes are always [0, 0, 0, 0, 0, 0, 0, 1] (perhaps version number?)
-// Remaining bytes are 16 byte aligned – perhaps AES encrypted?
-
-// Length depends on name length, given below calculation:
-// 152 + (Math.floor((data.StreamName.length + 2) / 16) * 16)
-function createShardIterator(streamName, shardId, seq) {
-  var encryptStr = [
-      (new Array(14).join('0') + Date.now()).slice(-14),
-      streamName,
-      shardId,
-      seq,
-      new Array(37).join('0'), // Not entirely sure what would be making up all this data in production
-    ].join('/'),
-    cipher = crypto.createCipher('aes-256-cbc', exports.ITERATOR_PWD),
-    buffer = Buffer.concat([
-      new Buffer([0, 0, 0, 0, 0, 0, 0, 1]),
-      cipher.update(encryptStr, 'utf8'),
-      cipher.final(),
-    ])
-  return buffer.toString('base64')
-}
-
-// Sum shards that haven't closed yet
-function sumShards(store, cb) {
-  exports.lazy(store.metaDb.createValueStream(), cb)
-    .map(function(stream) {
-      return stream.Shards.filter(function(shard) {
-        return shard.SequenceNumberRange.EndingSequenceNumber == null
-      }).length
-    })
-    .sum(function(sum) { return cb(null, sum) })
 }
