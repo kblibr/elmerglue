@@ -8,7 +8,10 @@
     "test": "mocha --require should --reporter spec -t $([ $REMOTE ] && echo 30s || echo 4s)",
     "coverage": "istanbul cover ./node_modules/.bin/_mocha -- --require should -t 4s"
   },
-  "repository": "???/elmerglue",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kblibr/elmerglue"
+  },
   "keywords": [
     "glue",
     "mock",
