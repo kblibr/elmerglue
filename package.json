@@ -1,6 +1,6 @@
 {
   "name": "elmerglue",
-  "version": "0.0.0-development",
+  "version": "0.0.1.1",
   "description": "An implementation of Amazon's Glue build on LevelDB",
   "main": "index.js",
   "bin": "cli.js",
